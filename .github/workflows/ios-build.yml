@@ -9,9 +9,6 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: upshift
     steps:
       - uses: actions/checkout@v4
 
@@ -22,19 +19,14 @@ jobs:
 
       - run: flutter pub get
 
-      # Creates ios/Flutter/Generated.xcconfig (needed by CocoaPods).
-      - name: Generate iOS config
-        run: flutter build ios --config-only --no-codesign
+      # Windows never creates ios/Podfile, but a real iOS build does.
+      # This first build is only here to generate it.
+      - name: First build (generates ios/Podfile)
+        run: flutter build ios --release --no-codesign
 
-      # Windows never creates ios/Podfile, and --config-only doesn't either,
-      # so copy Flutter's own template, then turn on Bluetooth for
-      # permission_handler and install pods.
-      - name: Set up Podfile with Bluetooth enabled
+      # permission_handler only includes Bluetooth if this flag is set.
+      - name: Enable Bluetooth in permission_handler
         run: |
-          FLUTTER_ROOT=$(dirname "$(dirname "$(which flutter)")")
-          if [ ! -f ios/Podfile ]; then
-            cp "$FLUTTER_ROOT/packages/flutter_tools/templates/cocoapods/Podfile-ios-swift" ios/Podfile
-          fi
           python3 - <<'PYEOF'
           p = 'ios/Podfile'
           s = open(p).read()
@@ -45,10 +37,13 @@ jobs:
               end"""
               s = s.replace('flutter_additional_ios_build_settings(target)', patch, 1)
               open(p, 'w').write(s)
+              print('Patched Podfile')
+          else:
+              print('Podfile already patched')
           PYEOF
           cd ios && pod install
 
-      - name: Build
+      - name: Final build
         run: flutter build ios --release --no-codesign
 
       - name: Package .ipa
@@ -60,4 +55,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: upshift-ios
-          path: upshift/upshift.ipa
+          path: upshift.ipa
