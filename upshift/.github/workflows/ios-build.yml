@@ -1,0 +1,54 @@
+# Save as: .github/workflows/ios-build.yml
+name: Build iOS (unsigned IPA)
+
+on:
+  workflow_dispatch:        # lets you run it from the Actions tab
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # Windows never creates ios/Podfile, so generate it here first.
+      - name: Generate Podfile
+        run: flutter build ios --config-only --no-codesign
+
+      # permission_handler only includes Bluetooth if this flag is set.
+      - name: Enable Bluetooth in permission_handler
+        run: |
+          python3 - <<'EOF'
+          p = 'ios/Podfile'
+          s = open(p).read()
+          if 'PERMISSION_BLUETOOTH' not in s:
+              patch = """flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)', 'PERMISSION_BLUETOOTH=1']
+              end"""
+              s = s.replace('flutter_additional_ios_build_settings(target)', patch, 1)
+              open(p, 'w').write(s)
+          EOF
+          cd ios && pod install
+
+      - name: Build
+        run: flutter build ios --release --no-codesign
+
+      - name: Package .ipa
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qry upshift.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upshift-ios
+          path: upshift.ipa
