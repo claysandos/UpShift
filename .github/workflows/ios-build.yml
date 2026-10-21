@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    defaults:
+    run:
+      working-directory: upshift
     steps:
       - uses: actions/checkout@v4
 
@@ -55,4 +58,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: upshift-ios
-          path: upshift.ipa
+          path: upshift/upshift.ipa
