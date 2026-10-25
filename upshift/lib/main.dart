@@ -25,16 +25,30 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   static const config = ShiftConfig();
   final reader = ObdRpmReader();
 
   String statusText = 'Not connected';
   bool connecting = false;
   bool connected = false;
+
+  String gearLabel(int gear) {
+    switch(gear){
+      case 0: return 'N';
+      case 1: return '1';
+      case 2: return '2';
+      case 3: return '3';
+      case 4: return '4';
+      case 5: return '5';
+      case 6: return '6';
+      case 0xFF: return 'R';
+    }
+    return '--';
+  }
 
   @override
   void initState() {
@@ -55,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  Future<bool> _ensurePermissions() async {
+  Future<bool> ensurePermissions() async {
     if (Platform.isAndroid) {
       final r = await [Permission.bluetoothScan, Permission.bluetoothConnect]
           .request();
@@ -67,7 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _connect() async {
     setState(() => connecting = true);
     try {
-      if (!await _ensurePermissions()) {
+      if (!await ensurePermissions()) {
         setState(() => statusText = 'Bluetooth permission denied');
         return;
       }
@@ -108,6 +122,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 style:
                 const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
               ),
+            ),
+            StreamBuilder<double>(
+              stream: reader.transTempStream,
+              builder: (_, snap) => Text(
+                snap.hasData ? 'Trans ${snap.data!.round()}°F' : 'Trans --°F',
+                style: const TextStyle(fontSize: 20, color: Color(0xFF8A93A0)),
+              )
+            ),
+            StreamBuilder<int>(
+              stream: reader.gearStream,
+              builder: (_, snap) => Text(
+                snap.hasData ? 'Gear ${gearLabel(snap.data!)}' : 'Gear --',
+                style: const TextStyle(fontSize: 20, color: Color(0xFF8A93A0)),
+              )
             ),
             Padding(
               padding: const EdgeInsets.all(16),

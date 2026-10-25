@@ -6,11 +6,20 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 // BLE-only RPM reader for ELM327-style adapters (e.g. Veepeak OBDCheck BLE+)
 //
 // Flow: scan by name -> connect -> find notify/write characteristics ->
-// init ELM327 -> poll PID 010C (RPM) in a loop
+// init ELM327 -> poll PID 010C (RPM) in a loop -> poll mode 22 PID 1940
 class ObdRpmReader {
   // Upper-case substrings that identify adapter's BLE name
   final List<String> nameHints;
-  ObdRpmReader({this.nameHints = const ['VEEPEAK', 'OBDCHECK']});
+  // Full request for the current gear ('22199A' = Mode 22 + PID)
+  final String gearPid;
+  // Address of the transmission module (GM = 7E2)
+  final String tcmHeader;
+
+  ObdRpmReader({
+    this.nameHints = const ['VEEPEAK', 'OBDCHECK'],
+    this.gearPid = '22199A',
+    this.tcmHeader = '7E2'
+  });
 
   BluetoothDevice? _device;
   BluetoothCharacteristic? _write;
@@ -23,10 +32,19 @@ class ObdRpmReader {
 
   final _rpmController = StreamController<double>.broadcast();
   final _statusController = StreamController<String>.broadcast();
+  final _transTempController = StreamController<double>.broadcast();
+  int transTempReadFails = 0;
+  final _gearController = StreamController<int>.broadcast();
+  int transGearReadFails = 0;
 
-  Stream<double> get rpmStream => _rpmController.stream;
   Stream<String> get status => _statusController.stream;
-  bool get isConnected => _running;
+
+  // Engine RPM in revolutions per minute
+  Stream<double> get rpmStream => _rpmController.stream;
+  // Transmission fluid temperature in degrees F
+  Stream<double> get transTempStream => _transTempController.stream;
+  // Current transmission gear
+  Stream<int> get gearStream => _gearController.stream;
 
   void _status(String s) => _statusController.add(s);
 
@@ -63,7 +81,7 @@ class ObdRpmReader {
 
     _running = true;
     _status('Connected');
-    unawaited(_pollLoop());
+    unawaited(pollLoop());
   }
 
   Future<BluetoothDevice> _scanForAdapter(Duration timeout) async {
@@ -161,20 +179,28 @@ class ObdRpmReader {
     }
   }
 
-  Future<void> _pollLoop() async {
+  /// Loop to continuously poll for RPM and transmission temperature
+  Future<void> pollLoop() async {
     // First request triggers protocol auto-detection
     var first = true;
+    var rpmReads = 0;
     while (_running) {
       try {
-        final reply = await _send(
+        final rpmReply = await _send(
           '010C',
           timeout: first
               ? const Duration(seconds: 10)
               : const Duration(milliseconds: 800),
         );
         first = false;
-        final rpm = parseRpm(reply);
+        final rpm = parseRpm(rpmReply);
         if (rpm != null) _rpmController.add(rpm);
+
+        // Every ~20 RPM reads, get transmission temp. Gives up after 3 failures -> unsupported car doesn't slow down RPMs
+        rpmReads++;
+        if (transTempReadFails < 3 && rpmReads % 20 == 0) {
+          await pollTransTemp();
+        }
       } on TimeoutException {
         // skip this sample
       } catch (e) {
@@ -182,6 +208,83 @@ class ObdRpmReader {
         await Future.delayed(const Duration(milliseconds: 300));
       }
     }
+  }
+
+  /// Poll for the transmission temperature in Celsius, convert it to Fahrenheit, add it to the stream
+  Future<void> pollTransTemp() async {
+    try {
+      // Read GM transmission fluid temp (Mode 22 PID 1940)
+      await _send('ATSH7E2', timeout: const Duration(seconds: 1));
+      final reply = await _send('221940', timeout: const Duration(seconds: 2));
+      final celsiusTemp = parseTransTemp(reply);
+      if (celsiusTemp != null) {
+        // Convert celsiusTemp to Fahrenheit then add to stream
+        _transTempController.add(celsiusTemp * 9 / 5 + 32);
+        transTempReadFails = 0;
+      } else {
+        // Report failure
+        transTempReadFails++;
+        if (transTempReadFails >= 3) _status('Trans temp not supported, process stopped.');
+      }
+    } on TimeoutException {
+      // Report failure
+      transTempReadFails++;
+    } finally {
+      try {
+        // Back to normal broadcast address for RPM requests
+        await _send('ATSH7DF', timeout: const Duration(seconds: 1));
+      } on TimeoutException {
+        // ignore
+      }
+    }
+  }
+
+  /// Poll for the current gear, add it to the stream
+  Future<void> pollGear() async {
+    try {
+      // Read GM current gear (Mode 22 PID 199A)
+      await _send('ATSH7E2', timeout: const Duration(seconds: 1));
+      final reply = await _send('22199A', timeout: const Duration(seconds: 2));
+      final gear = parseGear(reply, gearPid);
+      if (gear != null){
+        _gearController.add(gear);
+        transGearReadFails = 0;
+      } else {
+        // Report failure
+        transGearReadFails++;
+        if (transGearReadFails >= 3) _status('Trans gear not supported, process stopped.');
+      }
+    } on TimeoutException {
+      // Report failure
+      transGearReadFails++;
+    } finally {
+      try {
+        // Back to normal broadcast address for RPM requests
+        await _send('ATSH7DF', timeout: const Duration(seconds: 1));
+      } on TimeoutException {
+        // ignore
+      }
+    }
+  }
+
+  /// "62 19 9A 03" -> 0x03 = 3rd gear
+  static int? parseGear(String reply, String request) {
+    final clean = reply.replaceAll(RegExp(r'[\s>]'), '').toUpperCase();
+    final prefix = '62${request.substring(2).toUpperCase()}';
+    final index = clean.indexOf(prefix);
+    if (index < 0 || clean.length < index + prefix.length + 2) return null;
+    return int.tryParse(
+      clean.substring(index + prefix.length, index + prefix.length + 2),
+      radix: 16);
+  }
+
+  /// "62 19 40 7B" -> 0x7B (123) - 40 = 83 degrees Celsius
+  static double? parseTransTemp(String reply) {
+    final clean = reply.replaceAll(RegExp(r'[\s>]'), '').toUpperCase();
+    final index = clean.indexOf('621940');
+    if (index < 0 || clean.length < index + 8) return null;
+    final answer = int.tryParse(clean.substring(index + 6, index + 8), radix: 16);
+    return answer == null ? null : (answer - 40).toDouble();
   }
 
   /// "41 0C 1A F8" -> ((0x1A * 256) + 0xF8) / 4 = 1726 rpm

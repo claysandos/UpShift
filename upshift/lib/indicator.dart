@@ -53,31 +53,31 @@ class SsBadge extends StatefulWidget {
   });
 
   @override
-  State<SsBadge> createState() => _SsBadgeState();
+  State<SsBadge> createState() => SsBadgeState();
 }
 
-class _SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
-  late final AnimationController _flash = AnimationController(
+class SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
+  late final AnimationController flash = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 90),
   );
 
-  bool get _overRedline => widget.rpm >= widget.config.redlineRpm;
+  bool get overRedline => widget.rpm >= widget.config.redlineRpm;
 
   @override
   void didUpdateWidget(SsBadge old) {
     super.didUpdateWidget(old);
-    if (_overRedline && !_flash.isAnimating) {
-      _flash.repeat(reverse: true);
-    } else if (!_overRedline && _flash.isAnimating) {
-      _flash.stop();
-      _flash.value = 0;
+    if (overRedline && !flash.isAnimating) {
+      flash.repeat(reverse: true);
+    } else if (!overRedline && flash.isAnimating) {
+      flash.stop();
+      flash.value = 0;
     }
   }
 
   @override
   void dispose() {
-    _flash.dispose();
+    flash.dispose();
     super.dispose();
   }
 
@@ -86,7 +86,7 @@ class _SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
     final t = widget.config.progress(widget.rpm);
     final base = widget.config.colorFor(widget.rpm);
     // Glow gets bigger as RPM climbs, so it isn't color-only feedback
-    final glow = _overRedline ? 1.0 : 0.25 + 0.75 * t;
+    final glow = overRedline ? 1.0 : 0.25 + 0.75 * t;
 
     // Smooth the color between RPM updates
     return TweenAnimationBuilder<Color?>(
@@ -94,14 +94,14 @@ class _SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
       duration: const Duration(milliseconds: 90),
       builder: (context, smoothed, _) {
         return AnimatedBuilder(
-          animation: _flash,
+          animation: flash,
           builder: (context, _) {
-            final color = _overRedline
+            final color = overRedline
                 ? Color.lerp(
-                ShiftPalette.flashBlue, ShiftPalette.flashWhite, _flash.value)!
+                ShiftPalette.flashBlue, ShiftPalette.flashWhite, flash.value)!
                 : (smoothed ?? base);
             return CustomPaint(
-              painter: _SsPainter(
+              painter: SsPainter(
                 color: color,
                 glow: glow,
                 letterColor: widget.letterColor,
@@ -115,38 +115,38 @@ class _SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
   }
 }
 
-class _SsPainter extends CustomPainter {
+class SsPainter extends CustomPainter {
   final Color color;
   // 0..1
   final double glow;
   final Color letterColor;
 
-  _SsPainter({
+  SsPainter({
     required this.color,
     required this.glow,
     required this.letterColor,
   });
 
   // One boxy S on a 100 x 140 grid
-  static const _points = <Offset>[
+  static const points = <Offset>[
     Offset(0, 0), Offset(82, 0), Offset(100, 22), Offset(100, 30),
     Offset(30, 30), Offset(30, 48), Offset(36, 54), Offset(100, 54),
     Offset(100, 140), Offset(18, 140), Offset(0, 118), Offset(0, 110),
     Offset(70, 110), Offset(70, 92), Offset(64, 86), Offset(0, 86),
   ];
 
-  static Path _s(double dx) {
-    final p = Path()..moveTo(_points.first.dx + dx, _points.first.dy);
-    for (final pt in _points.skip(1)) {
+  static Path s(double dx) {
+    final p = Path()..moveTo(points.first.dx + dx, points.first.dy);
+    for (final pt in points.skip(1)) {
       p.lineTo(pt.dx + dx, pt.dy);
     }
     return p..close();
   }
 
   // Two S's side by side: 218 x 140
-  static final Path _letters = Path()
-    ..addPath(_s(0), Offset.zero)
-    ..addPath(_s(118), Offset.zero);
+  static final Path letters = Path()
+    ..addPath(s(0), Offset.zero)
+    ..addPath(s(118), Offset.zero);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -167,7 +167,7 @@ class _SsPainter extends CustomPainter {
       (sigma: 3 + 8 * glow, alpha: 0.5 + 0.4 * glow),
     ]) {
       canvas.drawPath(
-        _letters,
+        letters,
         Paint()
           ..color = color.withAlpha((pass.alpha * 255).round())
           ..style = PaintingStyle.stroke
@@ -179,19 +179,19 @@ class _SsPainter extends CustomPainter {
 
     // Outline (drawn first so the fill covers its inner half), then the fill
     canvas.drawPath(
-      _letters,
+      letters,
       Paint()
         ..color = color
         ..style = PaintingStyle.stroke
         ..strokeWidth = 12
         ..strokeJoin = StrokeJoin.miter,
     );
-    canvas.drawPath(_letters, Paint()..color = letterColor);
+    canvas.drawPath(letters, Paint()..color = letterColor);
 
     canvas.restore();
   }
 
   @override
-  bool shouldRepaint(_SsPainter old) =>
+  bool shouldRepaint(SsPainter old) =>
       old.color != color || old.glow != glow || old.letterColor != letterColor;
 }
