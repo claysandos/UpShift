@@ -5,6 +5,8 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'reader.dart';
 import 'indicator.dart';
+import 'color_menu.dart';
+import 'shift_menu.dart';
 
 void main() => runApp(const UpshiftApp());
 
@@ -21,6 +23,88 @@ class UpshiftApp extends StatelessWidget {
   }
 }
 
+// Maps the raw gear value from the transmission to a label
+String gearLabel(int gear) {
+  switch (gear) {
+    case 0: return 'N';
+    case 1: return '1';
+    case 2: return '2';
+    case 3: return '3';
+    case 4: return '4';
+    case 5: return '5';
+    case 6: return '6';
+    case 0xFF: return 'R';
+  }
+  return '--';
+}
+
+// Maps the raw temperature value from the transmission to a color
+Color transTempColor(double temp) {
+  if (temp < 140) return ShiftPalette.white;
+  if (temp <= 200) return ShiftPalette.green;
+  if (temp <= 210) return ShiftPalette.amber;
+  return ShiftPalette.red;
+}
+
+// Gear ladder: 1-6 at half opacity with the current gear in solid white.
+// N, R and unknown values show as text under the row. No reading = nothing lit.
+class GearLadder extends StatelessWidget {
+  final Stream<int> stream;
+  const GearLadder({super.key, required this.stream});
+
+  static const dim = Color(0x80F2F4F7);
+  static const digitStyle = TextStyle(
+    fontSize: 32,
+    fontWeight: FontWeight.w800,
+    fontStyle: FontStyle.italic,
+    height: 1,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: stream,
+      builder: (_, snap) {
+        final gear = snap.data;
+        final inRange = gear != null && gear >= 1 && gear <= 6;
+        final extra = (gear == null || inRange) ? '' : gearLabel(gear);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var g = 1; g <= 6; g++)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Text(
+                      '$g',
+                      style: digitStyle.copyWith(
+                        color: g == gear ? ShiftPalette.white : dim,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            SizedBox(
+              height: 24,
+              child: Text(
+                extra,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                  color: ShiftPalette.white,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -29,26 +113,16 @@ class HomeScreen extends StatefulWidget {
 }
 
 class HomeScreenState extends State<HomeScreen> {
-  static const config = ShiftConfig();
+  // The shift points; changed from the shift menu
+  ShiftConfig config = const ShiftConfig();
   final reader = ObdRpmReader();
+
+  // The shift palette; changed from the color menu
+  ShiftColors colors = const ShiftColors();
 
   String statusText = 'Not connected';
   bool connecting = false;
   bool connected = false;
-
-  String gearLabel(int gear) {
-    switch(gear){
-      case 0: return 'N';
-      case 1: return '1';
-      case 2: return '2';
-      case 3: return '3';
-      case 4: return '4';
-      case 5: return '5';
-      case 6: return '6';
-      case 0xFF: return 'R';
-    }
-    return '--';
-  }
 
   @override
   void initState() {
@@ -100,48 +174,82 @@ class HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            // Menus: Shift configuration and shift colors
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.tune),
+                  tooltip: 'Shift configuration',
+                  onPressed: () => showShiftMenu(
+                    context,
+                    config: config,
+                    onChanged: (c) => setState(() => config = c),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.palette_outlined),
+                  tooltip: 'Shift colors',
+                  onPressed: () => showColorMenu(
+                    context,
+                    colors: colors,
+                    onChanged: (c) => setState(() => colors = c),
+                  ),
+                ),
+              ],
+            ),
             Expanded(
               child: Center(
-                child: SizedBox(
-                  width: 340,
-                  height: 240,
-                  child: StreamBuilder<double>(
-                    stream: reader.rpmStream,
-                    initialData: 0,
-                    builder: (_, snap) =>
-                        SsBadge(rpm: snap.data ?? 0, config: config),
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 340,
+                      height: 240,
+                      child: StreamBuilder<double>(
+                        stream: reader.rpmStream,
+                        initialData: 0,
+                        builder: (_, snap) => SsBadge(
+                          rpm: snap.data ?? 0,
+                          config: config,
+                          colors: colors,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    GearLadder(stream: reader.gearStream),
+                  ],
                 ),
               ),
             ),
-            StreamBuilder<double>(
-              stream: reader.rpmStream,
-              initialData: 0,
-              builder: (_, snap) => Text(
-                '${(snap.data ?? 0).round()} RPM',
-                style:
-                const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
-              ),
-            ),
-            StreamBuilder<double>(
-              stream: reader.transTempStream,
-              builder: (_, snap) => Text(
-                snap.hasData ? 'Trans ${snap.data!.round()}°F' : 'Trans --°F',
-                style: const TextStyle(fontSize: 20, color: Color(0xFF8A93A0)),
-              )
-            ),
-            StreamBuilder<int>(
-              stream: reader.gearStream,
-              builder: (_, snap) => Text(
-                snap.hasData ? 'Gear ${gearLabel(snap.data!)}' : 'Gear --',
-                style: const TextStyle(fontSize: 20, color: Color(0xFF8A93A0)),
-              )
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(statusText,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFF8A93A0))),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                StreamBuilder<double>(
+                  stream: reader.rpmStream,
+                  initialData: 0,
+                  builder: (_, snap) => Text(
+                    '${(snap.data ?? 0).round()} RPM',
+                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(width: 24),
+                StreamBuilder<double>(
+                  stream: reader.transTempStream,
+                  builder: (_, snap) => Text(
+                    snap.hasData ? 'Trans ${snap.data!.round()}°F' : 'Trans --°F',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w700,
+                      color: snap.hasData
+                          ? transTempColor(snap.data!)
+                          : const Color(0xFF8A93A0),
+                    ),
+                  ),
+                ),
+              ],
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
@@ -149,16 +257,17 @@ class HomeScreenState extends State<HomeScreen> {
                 width: double.infinity,
                 height: 52,
                 child: FilledButton(
-                  onPressed: connecting
-                      ? null
-                      : connected
-                      ? reader.disconnect
-                      : _connect,
-                  child: Text(connecting
-                      ? 'Connecting…'
-                      : connected
-                      ? 'Disconnect'
-                      : 'Connect to adapter'),
+                    onPressed: connecting
+                        ? null
+                        : connected
+                        ? reader.disconnect
+                        : _connect,
+                    style: FilledButton.styleFrom(backgroundColor: ShiftPalette.white),
+                    child: Text(connecting
+                        ? 'Connecting…'
+                        : connected
+                        ? 'Disconnect'
+                        : 'Connect to adapter')
                 ),
               ),
             ),
