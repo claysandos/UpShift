@@ -206,6 +206,7 @@ class ObdReader {
     while (_running) {
       try {
         pollRpm();
+        // pollGear();
         rpmReads++;
 
         // Every ~20 RPM reads, get temperatures
@@ -213,9 +214,9 @@ class ObdReader {
           pollCoolantTemp();
           pollOilTemp();
           // Give up transmission temps after 3 failures
-          if (transTempReadFails < 3) {
-            await pollTransTemp();
-          }
+          // if (transTempReadFails < 3) {
+            // await pollTransTemp();
+          // }
         }
       } on TimeoutException {
         // skip this sample
