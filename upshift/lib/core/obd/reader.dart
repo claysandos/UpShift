@@ -205,23 +205,27 @@ class ObdReader {
     var rpmReads = 0;
     while (_running) {
       try {
-        pollRpm();
-        // pollGear();
+        await pollRpm();
+        await pollGear();
         rpmReads++;
 
         // Every ~20 RPM reads, get temperatures
         if (rpmReads % 20 == 0) {
-          pollCoolantTemp();
-          pollOilTemp();
+          await pollCoolantTemp();
+          await pollOilTemp();
           // Give up transmission temps after 3 failures
-          // if (transTempReadFails < 3) {
-            // await pollTransTemp();
-          // }
+          if (transTempReadFails < 3) {
+            await pollTransTemp();
+          }
         }
       } on TimeoutException {
         // skip this sample
       } catch (e) {
         _status('Read error: $e');
+        await Future.delayed(const Duration(milliseconds: 600));
+      }
+
+      if (_running) {
         await Future.delayed(const Duration(milliseconds: 300));
       }
     }
