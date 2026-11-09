@@ -7,18 +7,20 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 //
 // Flow: scan by name -> connect -> find notify/write characteristics ->
 // init ELM327 -> poll PID 010C (RPM) in a loop -> poll mode 22 PID 1940
-class ObdRpmReader {
+class ObdReader {
   // Upper-case substrings that identify adapter's BLE name
   final List<String> nameHints;
+
   // Full request for the current gear ('22199A' = Mode 22 + PID)
   final String gearPid;
+
   // Address of the transmission module (GM = 7E2)
   final String tcmHeader;
 
-  ObdRpmReader({
+  ObdReader({
     this.nameHints = const ['VEEPEAK', 'OBDCHECK'],
     this.gearPid = '22199A',
-    this.tcmHeader = '7E2'
+    this.tcmHeader = '7E2',
   });
 
   BluetoothDevice? _device;
@@ -31,6 +33,8 @@ class ObdRpmReader {
   bool _running = false;
 
   final _rpmController = StreamController<double>.broadcast();
+  final _coolantTempController = StreamController<double>.broadcast();
+  final _oilTempController = StreamController<double>.broadcast();
   final _statusController = StreamController<String>.broadcast();
   final _transTempController = StreamController<double>.broadcast();
   int transTempReadFails = 0;
@@ -41,8 +45,16 @@ class ObdRpmReader {
 
   // Engine RPM in revolutions per minute
   Stream<double> get rpmStream => _rpmController.stream;
+
+  // Coolant temperature in degrees F
+  Stream<double> get coolantTempStream => _coolantTempController.stream;
+
+  // Oil temperature in degrees F
+  Stream<double> get oilTempStream => _oilTempController.stream;
+
   // Transmission fluid temperature in degrees F
   Stream<double> get transTempStream => _transTempController.stream;
+
   // Current transmission gear
   Stream<int> get gearStream => _gearController.stream;
 
@@ -50,7 +62,9 @@ class ObdRpmReader {
 
   // --- Connect ---
 
-  Future<void> connect({Duration scanTimeout = const Duration(seconds: 12)}) async {
+  Future<void> connect({
+    Duration scanTimeout = const Duration(seconds: 12),
+  }) async {
     if (!await FlutterBluePlus.isSupported) {
       throw Exception('Bluetooth LE is not supported on this device');
     }
@@ -88,10 +102,11 @@ class ObdRpmReader {
     final found = Completer<BluetoothDevice>();
     final sub = FlutterBluePlus.onScanResults.listen((results) {
       for (final r in results) {
-        final name = (r.advertisementData.advName.isNotEmpty
-            ? r.advertisementData.advName
-            : r.device.platformName)
-            .toUpperCase();
+        final name =
+            (r.advertisementData.advName.isNotEmpty
+                    ? r.advertisementData.advName
+                    : r.device.platformName)
+                .toUpperCase();
         if (name.isNotEmpty &&
             nameHints.any(name.contains) &&
             !found.isCompleted) {
@@ -118,8 +133,10 @@ class ObdRpmReader {
     for (final s in services) {
       for (final c in s.characteristics) {
         final p = c.properties;
-        _status('GATT ${s.uuid.str128} / ${c.uuid.str128} '
-            'notify=${p.notify} write=${p.write} noResp=${p.writeWithoutResponse}');
+        _status(
+          'GATT ${s.uuid.str128} / ${c.uuid.str128} '
+          'notify=${p.notify} write=${p.write} noResp=${p.writeWithoutResponse}',
+        );
       }
     }
 
@@ -158,13 +175,17 @@ class ObdRpmReader {
     }
   }
 
-  Future<String> _send(String cmd,
-      {Duration timeout = const Duration(seconds: 2)}) async {
+  Future<String> _send(
+    String cmd, {
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
     _buf.clear();
     _pending = Completer<String>();
     final w = _write!;
-    await w.write('$cmd\r'.codeUnits,
-        withoutResponse: w.properties.writeWithoutResponse);
+    await w.write(
+      '$cmd\r'.codeUnits,
+      withoutResponse: w.properties.writeWithoutResponse,
+    );
     return _pending!.future.timeout(timeout);
   }
 
@@ -179,27 +200,22 @@ class ObdRpmReader {
     }
   }
 
-  /// Loop to continuously poll for RPM and transmission temperature
+  /// Loop to continuously poll for RPM, coolant temperature, oil temperature, and transmission temperature
   Future<void> pollLoop() async {
-    // First request triggers protocol auto-detection
-    var first = true;
     var rpmReads = 0;
     while (_running) {
       try {
-        final rpmReply = await _send(
-          '010C',
-          timeout: first
-              ? const Duration(seconds: 10)
-              : const Duration(milliseconds: 800),
-        );
-        first = false;
-        final rpm = parseRpm(rpmReply);
-        if (rpm != null) _rpmController.add(rpm);
-
-        // Every ~20 RPM reads, get transmission temp. Gives up after 3 failures -> unsupported car doesn't slow down RPMs
+        pollRpm();
         rpmReads++;
-        if (transTempReadFails < 3 && rpmReads % 20 == 0) {
-          await pollTransTemp();
+
+        // Every ~20 RPM reads, get temperatures
+        if (rpmReads % 20 == 0) {
+          pollCoolantTemp();
+          pollOilTemp();
+          // Give up transmission temps after 3 failures
+          if (transTempReadFails < 3) {
+            await pollTransTemp();
+          }
         }
       } on TimeoutException {
         // skip this sample
@@ -210,21 +226,55 @@ class ObdRpmReader {
     }
   }
 
+  /// Poll for the engine speed, convert it to RPM, add it to the stream
+  Future<void> pollRpm() async {
+    try {
+      final reply = await _send('010C', timeout: const Duration(seconds: 1));
+      final rpm = parseRpm(reply);
+      if (rpm != null) _rpmController.add(rpm);
+    } on TimeoutException {
+      // skip this sample
+    }
+  }
+
+  /// Poll for the coolant temperature in Celsius, convert it to Fahrenheit, add it to the stream
+  Future<void> pollCoolantTemp() async {
+    try {
+      final reply = await _send('0105', timeout: const Duration(seconds: 1));
+      final c = parseCoolantTemp(reply);
+      if (c != null) _coolantTempController.add(c * 9 / 5 + 32);
+    } on TimeoutException {
+      // skip this sample
+    }
+  }
+
+  /// Poll for the engine oil temperature in Celsius, convert it to Fahrenheit, add it to the stream
+  Future<void> pollOilTemp() async {
+    try {
+      final reply = await _send('015C', timeout: const Duration(seconds: 1));
+      final c = parseOilTemp(reply);
+      if (c != null) _oilTempController.add(c * 9 / 5 + 32);
+    } on TimeoutException {
+      // skip this sample
+    }
+  }
+
   /// Poll for the transmission temperature in Celsius, convert it to Fahrenheit, add it to the stream
   Future<void> pollTransTemp() async {
     try {
       // Read GM transmission fluid temp (Mode 22 PID 1940)
       await _send('ATSH7E2', timeout: const Duration(seconds: 1));
       final reply = await _send('221940', timeout: const Duration(seconds: 2));
-      final celsiusTemp = parseTransTemp(reply);
-      if (celsiusTemp != null) {
+      final transTemp = parseTransTemp(reply);
+      if (transTemp != null) {
         // Convert celsiusTemp to Fahrenheit then add to stream
-        _transTempController.add(celsiusTemp * 9 / 5 + 32);
+        _transTempController.add(transTemp);
         transTempReadFails = 0;
       } else {
         // Report failure
         transTempReadFails++;
-        if (transTempReadFails >= 3) _status('Trans temp not supported, process stopped.');
+        if (transTempReadFails >= 3)
+          _status('Trans temp not supported, process stopped.');
       }
     } on TimeoutException {
       // Report failure
@@ -246,13 +296,14 @@ class ObdRpmReader {
       await _send('ATSH7E2', timeout: const Duration(seconds: 1));
       final reply = await _send('22199A', timeout: const Duration(seconds: 2));
       final gear = parseGear(reply, gearPid);
-      if (gear != null){
+      if (gear != null) {
         _gearController.add(gear);
         transGearReadFails = 0;
       } else {
         // Report failure
         transGearReadFails++;
-        if (transGearReadFails >= 3) _status('Trans gear not supported, process stopped.');
+        if (transGearReadFails >= 3)
+          _status('Trans gear not supported, process stopped.');
       }
     } on TimeoutException {
       // Report failure
@@ -275,16 +326,36 @@ class ObdRpmReader {
     if (index < 0 || clean.length < index + prefix.length + 2) return null;
     return int.tryParse(
       clean.substring(index + prefix.length, index + prefix.length + 2),
-      radix: 16);
+      radix: 16,
+    );
   }
 
-  /// "62 19 40 7B" -> 0x7B (123) - 40 = 83 degrees Celsius
+  /// "41 05 7B" -> 0x7B (123) - 40 = 181 degrees F
+  static double? parseCoolantTemp(String reply) {
+    final clean = reply.replaceAll(RegExp(r'[\s>]'), '').toUpperCase();
+    final i = clean.indexOf('4105');
+    if (i < 0 || clean.length < i + 6) return null;
+    final a = int.tryParse(clean.substring(i + 4, i + 6), radix: 16);
+    return a == null ? null : ((a - 40).toDouble()) * 9 / 5 + 32;
+  }
+
+  /// "41 5C 82" -> 0x82 (130) - 40 = 90°C -> 194°F
+  static double? parseOilTemp(String reply) {
+    final clean = reply.replaceAll(RegExp(r'[\s>]'), '').toUpperCase();
+    final i = clean.indexOf('415C');
+    if (i < 0 || clean.length < i + 6) return null;
+
+    final a = int.tryParse(clean.substring(i + 4, i + 6), radix: 16);
+    return a == null ? null : ((a - 40).toDouble()) * 9 / 5 + 32;
+  }
+
+  /// "62 19 40 7B" -> 0x7B (123) - 40 = 181 degrees F
   static double? parseTransTemp(String reply) {
     final clean = reply.replaceAll(RegExp(r'[\s>]'), '').toUpperCase();
     final index = clean.indexOf('621940');
     if (index < 0 || clean.length < index + 8) return null;
-    final answer = int.tryParse(clean.substring(index + 6, index + 8), radix: 16);
-    return answer == null ? null : (answer - 40).toDouble();
+    final a = int.tryParse(clean.substring(index + 6, index + 8), radix: 16);
+    return a == null ? null : ((a - 40).toDouble()) * 9 / 5 + 32;
   }
 
   /// "41 0C 1A F8" -> ((0x1A * 256) + 0xF8) / 4 = 1726 rpm

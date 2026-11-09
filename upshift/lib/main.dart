@@ -3,10 +3,14 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import 'reader.dart';
-import 'indicator.dart';
-import 'color_menu.dart';
-import 'shift_menu.dart';
+import 'core/obd/reader.dart';
+import '../core/themes/AppTheme.dart';
+import '../widgets/indicator.dart';
+import '../widgets/color_menu.dart';
+import '../widgets/connection_menu_button.dart';
+import '../widgets/gear_indicator.dart';
+import '../widgets/shift_menu.dart';
+import '../widgets/temperature_panel.dart';
 
 void main() => runApp(const UpshiftApp());
 
@@ -17,90 +21,9 @@ class UpshiftApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
       home: const HomeScreen(),
-    );
-  }
-}
-
-// Maps the raw gear value from the transmission to a label
-String gearLabel(int gear) {
-  switch (gear) {
-    case 0: return 'N';
-    case 1: return '1';
-    case 2: return '2';
-    case 3: return '3';
-    case 4: return '4';
-    case 5: return '5';
-    case 6: return '6';
-    case 0xFF: return 'R';
-  }
-  return '--';
-}
-
-// Maps the raw temperature value from the transmission to a color
-Color transTempColor(double temp) {
-  if (temp < 140) return ShiftPalette.white;
-  if (temp <= 200) return ShiftPalette.green;
-  if (temp <= 210) return ShiftPalette.amber;
-  return ShiftPalette.red;
-}
-
-// Gear ladder: 1-6 at half opacity with the current gear in solid white.
-// N, R and unknown values show as text under the row. No reading = nothing lit.
-class GearLadder extends StatelessWidget {
-  final Stream<int> stream;
-  const GearLadder({super.key, required this.stream});
-
-  static const dim = Color(0x80F2F4F7);
-  static const digitStyle = TextStyle(
-    fontSize: 32,
-    fontWeight: FontWeight.w800,
-    fontStyle: FontStyle.italic,
-    height: 1,
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<int>(
-      stream: stream,
-      builder: (_, snap) {
-        final gear = snap.data;
-        final inRange = gear != null && gear >= 1 && gear <= 6;
-        final extra = (gear == null || inRange) ? '' : gearLabel(gear);
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var g = 1; g <= 6; g++)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Text(
-                      '$g',
-                      style: digitStyle.copyWith(
-                        color: g == gear ? ShiftPalette.white : dim,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            SizedBox(
-              height: 24,
-              child: Text(
-                extra,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2,
-                  color: ShiftPalette.white,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 }
@@ -113,12 +36,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class HomeScreenState extends State<HomeScreen> {
+  // The OBD II reader
+  final reader = ObdReader();
+  Color cyanStatusColor = AppTheme.widgetCyanAccent.withValues(alpha: 0.3);
+  Color mintStatusColor = AppTheme.widgetMintAccent.withValues(alpha: 0.3);
+
   // The shift points; changed from the shift menu
   ShiftConfig config = const ShiftConfig();
-  final reader = ObdRpmReader();
 
   // The shift palette; changed from the color menu
   ShiftColors colors = const ShiftColors();
+
+  // static const Color border = Color(0xFF29434D);
 
   String statusText = 'Not connected';
   bool connecting = false;
@@ -135,6 +64,12 @@ class HomeScreenState extends State<HomeScreen> {
         if (s == 'Disconnected') connected = false;
       });
     });
+    cyanStatusColor = connected
+        ? AppTheme.widgetCyanAccent
+        : AppTheme.widgetCyanAccent.withValues(alpha: 0.3);
+    mintStatusColor = connected
+        ? AppTheme.widgetMintAccent
+        : AppTheme.widgetMintAccent.withValues(alpha: 0.3);
   }
 
   @override
@@ -145,56 +80,55 @@ class HomeScreenState extends State<HomeScreen> {
 
   Future<bool> ensurePermissions() async {
     if (Platform.isAndroid) {
-      final r = await [Permission.bluetoothScan, Permission.bluetoothConnect]
-          .request();
+      final r = await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+      ].request();
       return r.values.every((s) => s.isGranted);
     }
     return (await Permission.bluetooth.request()).isGranted;
   }
 
-  Future<void> _connect() async {
-    setState(() => connecting = true);
-    try {
-      if (!await ensurePermissions()) {
-        setState(() => statusText = 'Bluetooth permission denied');
-        return;
-      }
-      await reader.connect();
-    } catch (e) {
-      setState(() => statusText = 'Error: $e');
-    } finally {
-      if (mounted) setState(() => connecting = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0D10),
       body: SafeArea(
         child: Column(
           children: [
-            // Menus: Shift configuration and shift colors
+            // Menus: Connection Menu, Indicator Configuration, and Color Configuration
             Row(
-              mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                Image.asset(
+                  'assets/icon/upshift.png',
+                  width: 80,
+                  height: 70,
+                  fit: BoxFit.cover,
+                ),
+
+                Spacer(),
+
+                ConnectionMenuButton(reader: reader),
                 IconButton(
                   icon: const Icon(Icons.tune),
-                  tooltip: 'Shift configuration',
+                  tooltip: 'Indicator Configuration',
                   onPressed: () => showShiftMenu(
                     context,
                     config: config,
                     onChanged: (c) => setState(() => config = c),
+                    connectionStatusStream: reader.status,
                   ),
+                  style: AppTheme.buttonStyle,
                 ),
                 IconButton(
                   icon: const Icon(Icons.palette_outlined),
-                  tooltip: 'Shift colors',
+                  tooltip: 'Color Configuration',
                   onPressed: () => showColorMenu(
                     context,
                     colors: colors,
                     onChanged: (c) => setState(() => colors = c),
+                    connectionStatusStream: reader.status,
                   ),
+                  style: AppTheme.buttonStyle,
                 ),
               ],
             ),
@@ -213,62 +147,31 @@ class HomeScreenState extends State<HomeScreen> {
                           rpm: snap.data ?? 0,
                           config: config,
                           colors: colors,
+                          isActive: (snap.data ?? 0) > 0,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    GearLadder(stream: reader.gearStream),
                   ],
                 ),
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                StreamBuilder<double>(
-                  stream: reader.rpmStream,
-                  initialData: 0,
-                  builder: (_, snap) => Text(
-                    '${(snap.data ?? 0).round()} RPM',
-                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                const SizedBox(width: 24),
-                StreamBuilder<double>(
-                  stream: reader.transTempStream,
-                  builder: (_, snap) => Text(
-                    snap.hasData ? 'Trans ${snap.data!.round()}°F' : 'Trans --°F',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                      color: snap.hasData
-                          ? transTempColor(snap.data!)
-                          : const Color(0xFF8A93A0),
-                    ),
-                  ),
-                ),
-              ],
-            ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-              child: SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: FilledButton(
-                    onPressed: connecting
-                        ? null
-                        : connected
-                        ? reader.disconnect
-                        : _connect,
-                    style: FilledButton.styleFrom(backgroundColor: ShiftPalette.white),
-                    child: Text(connecting
-                        ? 'Connecting…'
-                        : connected
-                        ? 'Disconnect'
-                        : 'Connect to adapter')
-                ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                children: [
+                  GearLadder(
+                    stream: reader.gearStream,
+                    cyanStatusColor: cyanStatusColor,
+                    mintStatusColor: mintStatusColor,
+                  ),
+                  const SizedBox(height: 32),
+                  TemperaturePanel(
+                    coolantTempStream: reader.coolantTempStream,
+                    oilTempStream: reader.oilTempStream,
+                    transmissionTempStream: reader.transTempStream,
+                    connectionStatusStream: reader.status,
+                  ),
+                ],
               ),
             ),
           ],

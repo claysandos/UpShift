@@ -1,6 +1,9 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+
+import '../core/themes/AppTheme.dart';
 
 // Colors for the shift-light states
 class ShiftPalette {
@@ -14,10 +17,13 @@ class ShiftPalette {
 class ShiftColors {
   // Cruise / start of the climb (default green)
   final Color low;
+
   // Middle of the climb (default amber)
   final Color mid;
+
   // Shift now (default red)
   final Color shift;
+
   // Redline strobe alternates between these two (default white / red).
   // redlineA is also the color the outline fades to during the shift stage.
   final Color redlineA;
@@ -37,14 +43,13 @@ class ShiftColors {
     Color? shift,
     Color? redlineA,
     Color? redlineB,
-  }) =>
-      ShiftColors(
-        low: low ?? this.low,
-        mid: mid ?? this.mid,
-        shift: shift ?? this.shift,
-        redlineA: redlineA ?? this.redlineA,
-        redlineB: redlineB ?? this.redlineB,
-      );
+  }) => ShiftColors(
+    low: low ?? this.low,
+    mid: mid ?? this.mid,
+    shift: shift ?? this.shift,
+    redlineA: redlineA ?? this.redlineA,
+    redlineB: redlineB ?? this.redlineB,
+  );
 }
 
 /// RPM Threshold Stages
@@ -60,12 +65,16 @@ class ShiftColors {
 class ShiftConfig {
   // Green until this RPM
   final double cruiseRpm;
+
   // Red with white outline at this RPM (shift)
   final double shiftRpm;
+
   // Red with white flashing at this RPM (redline)
   final double redlineRpm;
+
   // RPM drop needed below a threshold before leaving that stage
   final double hysteresis;
+
   // Set initial shift config RPMs
   const ShiftConfig({
     this.cruiseRpm = 2000,
@@ -79,13 +88,12 @@ class ShiftConfig {
     double? shiftRpm,
     double? redlineRpm,
     double? hysteresis,
-  }) =>
-      ShiftConfig(
-        cruiseRpm: cruiseRpm ?? this.cruiseRpm,
-        shiftRpm: shiftRpm ?? this.shiftRpm,
-        redlineRpm: redlineRpm ?? this.redlineRpm,
-        hysteresis: hysteresis ?? this.hysteresis,
-      );
+  }) => ShiftConfig(
+    cruiseRpm: cruiseRpm ?? this.cruiseRpm,
+    shiftRpm: shiftRpm ?? this.shiftRpm,
+    redlineRpm: redlineRpm ?? this.redlineRpm,
+    hysteresis: hysteresis ?? this.hysteresis,
+  );
 
   // 0.0 at cruiseRpm, 1.0 at shiftRpm
   double progress(double rpm) =>
@@ -103,15 +111,15 @@ class ShiftConfig {
 class SsBadge extends StatefulWidget {
   final double rpm;
   final ShiftConfig config;
+
   // Colors for each stage (see ShiftColors)
   final ShiftColors colors;
+
   // Slower redline strobe (about 1 per second) and no background flash
   final bool reduceFlashing;
-  // Also used as the inside of the letters unless filledLetters is true
-  final Color background;
-  // false: hollow letters, the outline carries the color
-  // true: letters are filled with the color, outline is a darker shade
-  final bool filledLetters;
+
+  // Whether the vehicle is running or not
+  final bool isActive;
 
   const SsBadge({
     super.key,
@@ -119,8 +127,7 @@ class SsBadge extends StatefulWidget {
     this.config = const ShiftConfig(),
     this.colors = const ShiftColors(),
     this.reduceFlashing = false,
-    this.background = const Color(0xFF0B0D10),
-    this.filledLetters = false,
+    required this.isActive,
   });
 
   @override
@@ -130,11 +137,21 @@ class SsBadge extends StatefulWidget {
 class SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
   late final Ticker ticker;
   Duration elapsed = Duration.zero;
-  // When the current shift stage began (drives the outline fade and pulse)
+
+  // When the current shift stage began (outline fade and pulse)
   Duration? shiftT0;
+
+  // When the startup began (pulse)
+  Duration? startupT0;
+
+  // Which stage the RPM is in
   int stage = 0;
+
   // Eased toward the real RPM so colors glide between updates
   late double displayRpm;
+
+  // 0.0 = powered off, 1.0 = fully illuminated
+  double power = 0.0;
 
   @override
   void initState() {
@@ -170,6 +187,18 @@ class SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
   void onTick(Duration d) {
     setState(() {
       elapsed = d;
+
+      // Smooth power-on and off transition
+      if (widget.isActive && power < 0.01 && startupT0 == null) {
+        startupT0 = d;
+      }
+      if (!widget.isActive) {
+        startupT0 = null;
+      }
+      final targetPower = widget.isActive ? 1.0 : 0.0;
+      power += (targetPower - power) * 0.06;
+
+      // Smooth RPM transition
       displayRpm += (widget.rpm - displayRpm) * 0.3;
       if (stage >= 2) {
         shiftT0 ??= d;
@@ -189,15 +218,14 @@ class SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     final c = widget.config;
     final t = c.progress(displayRpm);
-    final inShiftMs =
-    shiftT0 == null ? 0 : (elapsed - shiftT0!).inMilliseconds;
+    final inShiftMs = shiftT0 == null ? 0 : (elapsed - shiftT0!).inMilliseconds;
 
     // statusColor is the green -> red color for the current stage
     final colors = widget.colors;
     var statusColor = colors.low;
     var glow = 0.3;
     var scale = 1.0;
-    var bg = widget.background;
+    var bg = AppTheme.appBackground;
     var strobeOn = false;
 
     if (stage == 1) {
@@ -216,26 +244,39 @@ class SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
       statusColor = strobeOn ? colors.redlineA : colors.redlineB;
       glow = 1;
       if (!widget.reduceFlashing && strobeOn) {
-        bg = Color.lerp(widget.background, colors.redlineB, 0.28)!;
+        bg = Color.lerp(AppTheme.appBackground, colors.redlineB, 0.28)!;
       }
     }
 
     // Outline fades slowly to white (1.4 s) once the shift stage begins
     final w = (inShiftMs / 1400).clamp(0.0, 1.0);
+    // Fill color
     final Color fill;
+    // Outline color
     final Color outline;
-    if (widget.filledLetters) {
-      fill = statusColor;
-      outline = stage == 3
-          ? (strobeOn ? colors.redlineB : colors.redlineA)
-          : Color.lerp(Color.lerp(statusColor, Colors.black, 0.45)!,
-          colors.redlineA, w)!;
-    } else {
-      fill = widget.background;
-      outline = stage == 3
-          ? statusColor
-          : Color.lerp(statusColor, colors.redlineA, w)!;
+
+    fill = AppTheme.appBackground;
+    outline = stage == 3
+        ? statusColor
+        : Color.lerp(statusColor, colors.redlineA, w)!;
+
+    // Blend between the unpowered and illuminated appearance
+    final poweredOutline = Color.lerp(AppTheme.appDim, outline, power)!;
+
+    final poweredFill = Color.lerp(AppTheme.appBackground, fill, power)!;
+
+    final poweredGlow = glow * power;
+
+    double startupFlare = 0.0;
+    if (startupT0 != null && widget.isActive) {
+      final startupMs = (elapsed - startupT0!).inMilliseconds;
+      final progress = (startupMs / 1200).clamp(0.0, 1.0);
+
+      // Fast burst followed by a smooth fade
+      startupFlare = math.sin(progress * math.pi) + (1.0 - progress);
     }
+
+    final finalGlow = (poweredGlow + startupFlare * 2.0).clamp(0.0, 6.0);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -245,10 +286,10 @@ class SsBadgeState extends State<SsBadge> with SingleTickerProviderStateMixin {
       child: CustomPaint(
         size: Size.infinite,
         painter: SsPainter(
-          fill: fill,
-          outline: outline,
+          fill: poweredFill,
+          outline: poweredOutline,
           glowColor: statusColor,
-          glow: glow,
+          glow: finalGlow,
           scale: scale,
         ),
       ),
@@ -260,6 +301,7 @@ class SsPainter extends CustomPainter {
   final Color fill;
   final Color outline;
   final Color glowColor;
+
   // 0..1
   final double glow;
   final double scale;
@@ -274,10 +316,22 @@ class SsPainter extends CustomPainter {
 
   // One boxy S on a 100 x 140 grid
   static const points = <Offset>[
-    Offset(0, 0), Offset(82, 0), Offset(100, 22), Offset(100, 30),
-    Offset(30, 30), Offset(30, 48), Offset(36, 54), Offset(100, 54),
-    Offset(100, 140), Offset(18, 140), Offset(0, 118), Offset(0, 110),
-    Offset(70, 110), Offset(70, 92), Offset(64, 86), Offset(0, 86),
+    Offset(0, 0),
+    Offset(82, 0),
+    Offset(100, 22),
+    Offset(100, 30),
+    Offset(30, 30),
+    Offset(30, 48),
+    Offset(36, 54),
+    Offset(100, 54),
+    Offset(100, 140),
+    Offset(18, 140),
+    Offset(0, 118),
+    Offset(0, 110),
+    Offset(70, 110),
+    Offset(70, 92),
+    Offset(64, 86),
+    Offset(0, 86),
   ];
 
   static Path s(double dx) {
@@ -314,7 +368,9 @@ class SsPainter extends CustomPainter {
       canvas.drawPath(
         letters,
         Paint()
-          ..color = glowColor.withAlpha((pass.alpha * 255).round())
+          ..color = glowColor.withAlpha(
+            (pass.alpha * (glow.clamp(0.0, 1.0) * 255)).round().clamp(0, 255),
+          )
           ..style = PaintingStyle.stroke
           ..strokeWidth = 12
           ..strokeJoin = StrokeJoin.miter
@@ -339,8 +395,8 @@ class SsPainter extends CustomPainter {
   @override
   bool shouldRepaint(SsPainter old) =>
       old.fill != fill ||
-          old.outline != outline ||
-          old.glowColor != glowColor ||
-          old.glow != glow ||
-          old.scale != scale;
+      old.outline != outline ||
+      old.glowColor != glowColor ||
+      old.glow != glow ||
+      old.scale != scale;
 }

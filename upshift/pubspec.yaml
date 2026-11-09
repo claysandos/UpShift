@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_blue_plus: ^1.35.0
   permission_handler: ^11.3.0
+  google_fonts: ^9.0.0
 
 dev_dependencies:
   flutter_test:
@@ -52,18 +53,20 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon/upshift_logo.png"
+  image_path: "assets/icon/upshift.png"
+  adaptive_icon_background: "#10191F"
+  adaptive_icon_foreground: "assets/icon/upshift.png"
 
 flutter_native_splash:
   color: "#000000"
-  image: "assets/icon/upshift_logo.png"
+  image: "assets/icon/upshift.png"
   android: true
   ios: true
 
   android_12:
     color: "#000000"
     icon_background_color: "#000000"
-    image: "assets/icon/upshift_logo.png"
+    image: "assets/icon/upshift.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -75,6 +78,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/icon/upshift.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
