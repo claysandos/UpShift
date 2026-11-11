@@ -30,19 +30,17 @@ String gearLabel(int gear) {
 // R = 0xFF and N = 0. No reading (or unknown value) means nothing is lit.
 // All eight letters always on screen
 class GearLadder extends StatelessWidget {
-  final Stream<int> stream;
+  final Stream<int> gearStream;
   final bool active;
   final int? forceGear;
-  final Color cyanStatusColor;
-  final Color mintStatusColor;
+  final Stream<String> connectionStatusStream;
 
   const GearLadder({
     super.key,
-    required this.stream,
+    required this.gearStream,
     this.active = true,
     this.forceGear,
-    required this.cyanStatusColor,
-    required this.mintStatusColor,
+    required this.connectionStatusStream
   });
 
   // Label the raw value the transmission reports
@@ -59,138 +57,154 @@ class GearLadder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<int>(
-      stream: stream,
-      builder: (_, snap) {
-        final gear = snap.data;
+    return StreamBuilder<String>(
+      stream: connectionStatusStream,
+      initialData: 'Disconnected',
+      builder: (context, connectionSnapshot) {
+        final bool connected = connectionSnapshot.data == 'Connected';
 
-        return Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppTheme.widgetBackground,
-                border: Border.all(color: AppTheme.widgetBorder, width: 1.2),
-                borderRadius: BorderRadius.circular(32),
-                boxShadow: [BoxShadow(color: cyanStatusColor, blurRadius: 12)],
-              ),
-              child: Column(
-                children: [
-                  // Header
-                  Row(
-                    children: [
-                      Container(width: 4, height: 16, color: cyanStatusColor),
-                      const SizedBox(width: 9),
-                      Text(
-                        'GEAR INDICATOR',
-                        style: TextStyle(
-                          color: cyanStatusColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 2.0,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: mintStatusColor),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          'LIVE',
-                          style: TextStyle(
-                            color: mintStatusColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ),
-                    ],
+        Color cyanStatusColor = connected
+            ? AppTheme.widgetCyanAccent
+            : AppTheme.widgetCyanAccent.withValues(alpha: 0.3);
+        Color mintStatusColor = connected
+            ? AppTheme.widgetMintAccent
+            : AppTheme.widgetMintAccent.withValues(alpha: 0.3);
+
+        return StreamBuilder<int>(
+          stream: gearStream,
+          initialData: 0,
+          builder: (_, snap) {
+            final gear = snap.data;
+
+            return Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.widgetBackground,
+                    border: Border.all(color: AppTheme.widgetBorder, width: 1.2),
+                    borderRadius: BorderRadius.circular(32),
+                    boxShadow: [BoxShadow(color: cyanStatusColor, blurRadius: 12)],
                   ),
-
-                  const SizedBox(height: 12),
-
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final g in gears)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Column(
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          Container(width: 4, height: 16, color: cyanStatusColor),
+                          const SizedBox(width: 9),
+                          Text(
+                            'GEAR INDICATOR',
+                            style: TextStyle(
+                              color: cyanStatusColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2.0,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: mintStatusColor),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
                             child: Text(
-                              g.$1,
-                              style: AppTheme.gearStyle.copyWith(
-                                color: g.$2 == gear
-                                    ? ShiftPalette.white
-                                    : AppTheme.appDim,
-                                shadows: g.$2 == gear
-                                    ? [
-                                        Shadow(
-                                          color: cyanStatusColor,
-                                          blurRadius: 10,
-                                        ),
-                                        Shadow(
-                                          color: cyanStatusColor,
-                                          blurRadius: 24,
-                                        ),
-                                      ]
-                                    : null,
+                              'LIVE',
+                              style: TextStyle(
+                                color: mintStatusColor,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
                               ),
                             ),
                           ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  Row(
-                    children: [
-                      // Type of widget
-                      const Icon(
-                        Icons.sensors,
-                        size: 12,
-                        color: AppTheme.appDim,
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      const Text(
-                        'VEHICLE TELEMETRY',
-                        style: TextStyle(
-                          color: AppTheme.appDim,
-                          fontSize: 9,
-                          letterSpacing: 1.3,
-                          fontFamily: 'monospace',
+
+                      const SizedBox(height: 12),
+
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final g in gears)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                child: Text(
+                                  g.$1,
+                                  style: AppTheme.gearStyle.copyWith(
+                                    color: g.$2 == gear
+                                        ? ShiftPalette.white
+                                        : AppTheme.appDim,
+                                    shadows: g.$2 == gear
+                                        ? [
+                                      Shadow(
+                                        color: cyanStatusColor,
+                                        blurRadius: 10,
+                                      ),
+                                      Shadow(
+                                        color: cyanStatusColor,
+                                        blurRadius: 24,
+                                      ),
+                                    ]
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
 
-                      const Spacer(),
+                      const SizedBox(height: 16),
 
-                      // Cool dev name
-                      const Text(
-                        'UPSHIFT SYSTEMS',
-                        style: TextStyle(
-                          color: AppTheme.widgetBorder,
-                          fontSize: 9,
-                          letterSpacing: 1.2,
-                          fontFamily: 'monospace',
-                        ),
+                      Row(
+                        children: [
+                          // Type of widget
+                          const Icon(
+                            Icons.sensors,
+                            size: 12,
+                            color: AppTheme.appDim,
+                          ),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'VEHICLE TELEMETRY',
+                            style: TextStyle(
+                              color: AppTheme.appDim,
+                              fontSize: 9,
+                              letterSpacing: 1.3,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+
+                          const Spacer(),
+
+                          // Cool dev name
+                          const Text(
+                            'UPSHIFT SYSTEMS',
+                            style: TextStyle(
+                              color: AppTheme.widgetBorder,
+                              fontSize: 9,
+                              letterSpacing: 1.2,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              ],
+            );
+          },
         );
-      },
+      }
     );
   }
 }

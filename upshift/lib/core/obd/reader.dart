@@ -247,18 +247,19 @@ class ObdReader {
     try {
       final reply = await _send('0105', timeout: const Duration(seconds: 1));
       final c = parseCoolantTemp(reply);
-      if (c != null) _coolantTempController.add(c * 9 / 5 + 32);
+      if (c != null) _coolantTempController.add(c);
     } on TimeoutException {
       // skip this sample
     }
   }
 
+  // Not working
   /// Poll for the engine oil temperature in Celsius, convert it to Fahrenheit, add it to the stream
   Future<void> pollOilTemp() async {
     try {
-      final reply = await _send('015C', timeout: const Duration(seconds: 1));
+      final reply = await _send('22153E', timeout: const Duration(seconds: 1));
       final c = parseOilTemp(reply);
-      if (c != null) _oilTempController.add(c * 9 / 5 + 32);
+      if (c != null) _oilTempController.add(c);
     } on TimeoutException {
       // skip this sample
     }
@@ -344,10 +345,10 @@ class ObdReader {
     return a == null ? null : ((a - 40).toDouble()) * 9 / 5 + 32;
   }
 
-  /// "41 5C 82" -> 0x82 (130) - 40 = 90°C -> 194°F
+  /// "41 153E 82" -> 0x82 (130) - 40 = 90°C -> 194°F
   static double? parseOilTemp(String reply) {
     final clean = reply.replaceAll(RegExp(r'[\s>]'), '').toUpperCase();
-    final i = clean.indexOf('415C');
+    final i = clean.indexOf('4153E');
     if (i < 0 || clean.length < i + 6) return null;
 
     final a = int.tryParse(clean.substring(i + 4, i + 6), radix: 16);

@@ -22,7 +22,7 @@ class UpshiftApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark,
+      themeMode: ThemeMode.light,
       home: const HomeScreen(),
     );
   }
@@ -102,7 +102,7 @@ class HomeScreenState extends State<HomeScreen> {
                   'assets/icon/upshift.png',
                   width: 80,
                   height: 70,
-                  fit: BoxFit.cover,
+                  fit: BoxFit.contain,
                 ),
 
                 Spacer(),
@@ -160,9 +160,8 @@ class HomeScreenState extends State<HomeScreen> {
               child: Column(
                 children: [
                   GearLadder(
-                    stream: reader.gearStream,
-                    cyanStatusColor: cyanStatusColor,
-                    mintStatusColor: mintStatusColor,
+                    gearStream: reader.gearStream,
+                    connectionStatusStream: reader.status,
                   ),
                   const SizedBox(height: 32),
                   TemperaturePanel(
